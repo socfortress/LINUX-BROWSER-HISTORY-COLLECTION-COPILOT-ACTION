@@ -1,6 +1,6 @@
 ## Browser-history-and-acrtifacts-collection.sh
 
-This script collects browser artifacts such as history, bookmarks, downloads, and cookies from Chrome/Chromium, Edge, and Firefox profiles for all users, providing a JSON-formatted output for integration with security tools like OSSEC/Wazuh.
+This script collects browser artifacts such as history, bookmarks, downloads, and cookies from Chrome/Chromium, Edge, and Firefox profiles for all users, providing a JSON-formatted output for integration with your SIEM.
 
 ### Overview
 
