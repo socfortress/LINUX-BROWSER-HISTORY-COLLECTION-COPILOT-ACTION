@@ -1,10 +1,10 @@
-## Collect-Browser-Artifacts
+## Browser-history-and-acrtifacts-collection.sh
 
 This script collects browser artifacts such as history, bookmarks, downloads, and cookies from Chrome/Chromium, Edge, and Firefox profiles for all users, providing a JSON-formatted output for integration with security tools like OSSEC/Wazuh.
 
 ### Overview
 
-The `Collect-Browser-Artifacts` script scans user browser profiles for Chrome/Chromium, Edge, and Firefox, extracting relevant artifacts using SQLite queries and direct file reads. Output is formatted as JSON for active response workflows.
+The `Browser-history-and-acrtifacts-collection.sh` script scans user browser profiles for Chrome/Chromium, Edge, and Firefox, extracting relevant artifacts using SQLite queries and direct file reads. Output is formatted as JSON for active response workflows.
 
 ### Script Details
 
@@ -22,7 +22,7 @@ The `Collect-Browser-Artifacts` script scans user browser profiles for Chrome/Ch
 
 #### Command Line Execution
 ```bash
-./Collect-Browser-Artifacts
+./Browser-history-and-acrtifacts-collection.sh
 ```
 
 #### Parameters
@@ -30,7 +30,7 @@ The `Collect-Browser-Artifacts` script scans user browser profiles for Chrome/Ch
 | Parameter | Type | Default Value | Description |
 |-----------|------|---------------|-------------|
 | `ARLog`   | string | `/var/ossec/active-response/active-responses.log` | Path for active response JSON output |
-| `LogPath` | string | `/tmp/Collect-Browser-Artifacts-script.log` | Path for detailed execution logs |
+| `LogPath` | string | `/tmp/Browser-history-and-acrtifacts-collection.sh-script.log` | Path for detailed execution logs |
 | `LogMaxKB` | int | 100 | Maximum log file size in KB before rotation |
 | `LogKeep` | int | 5 | Number of rotated log files to retain |
 
@@ -57,7 +57,7 @@ The `Collect-Browser-Artifacts` script scans user browser profiles for Chrome/Ch
 {
   "timestamp": "2025-07-18T10:30:45.123Z",
   "host": "HOSTNAME",
-  "action": "Collect-Browser-Artifacts",
+  "action": "Browser-history-and-acrtifacts-collection.sh",
   "data": {
     "chrome_chromium": {
       "user1-google-chrome": {
@@ -109,7 +109,7 @@ The `Collect-Browser-Artifacts` script scans user browser profiles for Chrome/Ch
 #### Debugging
 Enable verbose logging:
 ```bash
-VERBOSE=1 ./Collect-Browser-Artifacts
+VERBOSE=1 ./Browser-history-and-acrtifacts-collection.sh
 ```
 
 ### Contributing
