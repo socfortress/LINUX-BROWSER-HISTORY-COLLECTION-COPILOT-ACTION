@@ -168,7 +168,7 @@ install_sqlite3 || {
   ts=$(date --iso-8601=seconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
   errorMsg="sqlite3 missing and could not be installed."
   WriteLog "$errorMsg" ERROR
-  final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"status\":\"error\",\"error\":\"$errorMsg\",\"copilot_soar\":true}"
+  final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"status\":\"error\",\"error\":\"$errorMsg\",\"copilot_action\":true}"
   tmpfile=$(mktemp)
   printf '%s\n' "$final_json" > "$tmpfile"
   if ! mv -f "$tmpfile" "$ARLog" 2>/dev/null; then mv -f "$tmpfile" "$ARLog.new"; fi
@@ -184,7 +184,7 @@ done
 payload="{${payload#,}}"
 
 ts=$(date --iso-8601=seconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
-final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"data\":$payload,\"copilot_soar\":true}"
+final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"data\":$payload,\"copilot_action\":true}"
 
 tmpfile=$(mktemp)
 printf '%s\n' "$final_json" > "$tmpfile"
