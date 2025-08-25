@@ -10,6 +10,9 @@ HostName="$(hostname)"
 runStart=$(date +%s)
 VERBOSE=1
 
+# Single lookback control, in HOURS (ARG1 preferred, then $1). Default: 168h (7 days)
+LOOKBACK_HOURS="${ARG1:-${1:-168}}"
+
 WriteLog() {
   Message="$1"; Level="${2:-INFO}"
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -44,6 +47,24 @@ escape_json() {
 RotateLog
 WriteLog "=== SCRIPT START : $ScriptName ==="
 
+# Validate LOOKBACK_HOURS is numeric
+case "$LOOKBACK_HOURS" in
+  ''|*[!0-9]*) 
+    WriteLog "LOOKBACK_HOURS must be a positive integer (hours): '$LOOKBACK_HOURS'" ERROR
+    ts=$(date --iso-8601=seconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
+    final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"status\":\"error\",\"error\":\"Invalid LOOKBACK_HOURS: $(escape_json "$LOOKBACK_HOURS")\",\"copilot_action\":true}"
+    tmpfile=$(mktemp); printf '%s\n' "$final_json" > "$tmpfile"
+    if ! mv -f "$tmpfile" "$ARLog" 2>/dev/null; then mv -f "$tmpfile" "$ARLog.new"; fi
+    exit 1
+    ;;
+esac
+
+# Compute cutoffs
+cutoff_unix=$(( $(date +%s) - LOOKBACK_HOURS*3600 ))                       # seconds since 1970
+cutoff_win=$(( (cutoff_unix + 11644473600) * 1000000 ))                    # microseconds since 1601 (Chromium timestamps)
+cutoff_unix_us=$(( cutoff_unix * 1000000 ))                                # microseconds since 1970 (Firefox timestamps)
+WriteLog "Collecting artifacts from the last ${LOOKBACK_HOURS} hours (cutoff_unix=$cutoff_unix)" INFO
+
 install_sqlite3() {
   if ! command -v sqlite3 >/dev/null 2>&1; then
     WriteLog "sqlite3 not found. Attempting install..." WARN
@@ -66,7 +87,6 @@ query_sqlite() {
   [ -s "$db" ] || { WriteLog "DB missing/empty: $db" DEBUG; return 0; }
   tmpdb="/tmp/$(basename "$db").$$"
   cp "$db" "$tmpdb" 2>/dev/null || { WriteLog "Copy failed, skipping: $db" DEBUG; return 0; }
-  # -json is supported in modern sqlite builds; sed drops a lone 'null'
   result=$(timeout 10 sqlite3 -readonly -json "$tmpdb" "$sql" 2>/dev/null | sed '/^null$/d' || true)
   rm -f "$tmpdb"
   echo "$result"
@@ -78,7 +98,7 @@ collect_chrome_artifacts_all() {
     [ -d "$home" ] || continue
     user=$(basename "$home")
 
-    # Common base dirs for Chromium-like browsers (native + Snap)
+    # Common base dirs for Chromium-like browsers (native + Snap/Brave/etc.)
     for base in \
       "$home/.config/google-chrome" \
       "$home/.config/chromium" \
@@ -100,25 +120,37 @@ collect_chrome_artifacts_all() {
 
         out=""
 
-        history=$(query_sqlite "$profile/History" \
-          "SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit
-           FROM urls ORDER BY last_visit_time DESC LIMIT 500;")
+        # HISTORY (urls.last_visit_time, microseconds since 1601)
+        history=$(query_sqlite "$profile/History" "
+          SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit
+          FROM urls
+          WHERE last_visit_time > $cutoff_win
+          ORDER BY last_visit_time DESC LIMIT 1000;")
         [ -n "$history" ] && out="$out\"history\":$history,"
 
+        # BOOKMARKS (JSON file; include always)
         if [ -f "$profile/Bookmarks" ]; then
           bookmarks=$(tr -d '\n\r\000' < "$profile/Bookmarks")
           bookmarks=$(escape_json "$bookmarks")
           [ -n "$bookmarks" ] && out="$out\"bookmarks\":\"$bookmarks\","
         fi
 
-        downloads=$(query_sqlite "$profile/History" \
-          "SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') AS start_time
-           FROM downloads ORDER BY start_time DESC LIMIT 500;")
+        # DOWNLOADS (History.downloads.start_time, microseconds since 1601)
+        downloads=$(query_sqlite "$profile/History" "
+          SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') AS start_time
+          FROM downloads
+          WHERE start_time > $cutoff_win
+          ORDER BY start_time DESC LIMIT 1000;")
         [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
 
-        cookies=$(query_sqlite "$profile/Network/Cookies" \
-          "SELECT host_key,name,value,datetime(expires_utc/1000000-11644473600,'unixepoch') AS expires
-           FROM cookies LIMIT 500;")
+        # COOKIES (Network/Cookies: prefer last_access_utc; fallback to creation_utc)
+        cookies=$(query_sqlite "$profile/Network/Cookies" "
+          SELECT host_key,name,value,
+                 datetime(expires_utc/1000000-11644473600,'unixepoch') AS expires,
+                 datetime(last_access_utc/1000000-11644473600,'unixepoch') AS last_access
+          FROM cookies
+          WHERE (last_access_utc > $cutoff_win) OR (creation_utc > $cutoff_win)
+          LIMIT 1000;")
         [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
 
         out="${out%,}"
@@ -143,9 +175,12 @@ collect_edge_artifacts_all() {
       WriteLog "Collecting from $user - edge - $profname" DEBUG
 
       out=""
-      history=$(query_sqlite "$profile/History" \
-        "SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit
-         FROM urls ORDER BY last_visit_time DESC LIMIT 500;")
+
+      history=$(query_sqlite "$profile/History" "
+        SELECT url,title,datetime(last_visit_time/1000000-11644473600,'unixepoch') AS last_visit
+        FROM urls
+        WHERE last_visit_time > $cutoff_win
+        ORDER BY last_visit_time DESC LIMIT 1000;")
       [ -n "$history" ] && out="$out\"history\":$history,"
 
       if [ -f "$profile/Bookmarks" ]; then
@@ -154,14 +189,20 @@ collect_edge_artifacts_all() {
         [ -n "$bookmarks" ] && out="$out\"bookmarks\":\"$bookmarks\","
       fi
 
-      downloads=$(query_sqlite "$profile/History" \
-        "SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') as start_time
-         FROM downloads ORDER BY start_time DESC LIMIT 500;")
+      downloads=$(query_sqlite "$profile/History" "
+        SELECT target_path,tab_url,datetime(start_time/1000000-11644473600,'unixepoch') as start_time
+        FROM downloads
+        WHERE start_time > $cutoff_win
+        ORDER BY start_time DESC LIMIT 1000;")
       [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
 
-      cookies=$(query_sqlite "$profile/Network/Cookies" \
-        "SELECT host_key,name,value,datetime(expires_utc/1000000-11644473600,'unixepoch') as expires
-         FROM cookies LIMIT 500;")
+      cookies=$(query_sqlite "$profile/Network/Cookies" "
+        SELECT host_key,name,value,
+               datetime(expires_utc/1000000-11644473600,'unixepoch') as expires,
+               datetime(last_access_utc/1000000-11644473600,'unixepoch') AS last_access
+        FROM cookies
+        WHERE (last_access_utc > $cutoff_win) OR (creation_utc > $cutoff_win)
+        LIMIT 1000;")
       [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
 
       out="${out%,}"
@@ -188,21 +229,32 @@ collect_firefox_artifacts_all() {
         WriteLog "Collecting from $user - firefox profile $profname [$base]" DEBUG
 
         out=""
-        history=$(query_sqlite "$prof/places.sqlite" \
-          "SELECT url,title,datetime(last_visit_date/1000000,'unixepoch') as last_visit
-           FROM moz_places ORDER BY last_visit_date DESC LIMIT 500;")
+
+        # HISTORY (moz_places.last_visit_date, microseconds since 1970)
+        history=$(query_sqlite "$prof/places.sqlite" "
+          SELECT url,title,datetime(last_visit_date/1000000,'unixepoch') as last_visit
+          FROM moz_places
+          WHERE last_visit_date > $cutoff_unix_us
+          ORDER BY last_visit_date DESC LIMIT 1000;")
         [ -n "$history" ] && out="$out\"history\":$history,"
 
-        cookies=$(query_sqlite "$prof/cookies.sqlite" \
-          "SELECT host,name,value,datetime(expiry,'unixepoch') as expires
-           FROM moz_cookies LIMIT 500;")
+        # COOKIES (moz_cookies.lastAccessed/creationTime in microseconds since 1970; expiry is seconds)
+        cookies=$(query_sqlite "$prof/cookies.sqlite" "
+          SELECT host,name,value,
+                 datetime(expiry,'unixepoch') as expires,
+                 datetime(lastAccessed/1000000,'unixepoch') as last_access
+          FROM moz_cookies
+          WHERE (lastAccessed > $cutoff_unix_us) OR (creationTime > $cutoff_unix_us)
+          LIMIT 1000;")
         [ -n "$cookies" ] && out="$out\"cookies\":$cookies,"
 
-        # Some distros use 'downloads.sqlite'; modern ones track via places or different tables.
+        # DOWNLOADS (legacy) if present (endTime microseconds since 1970)
         if [ -f "$prof/downloads.sqlite" ]; then
-          downloads=$(query_sqlite "$prof/downloads.sqlite" \
-            "SELECT name,source,datetime(endTime/1000000,'unixepoch') as end_time
-             FROM moz_downloads LIMIT 500;")
+          downloads=$(query_sqlite "$prof/downloads.sqlite" "
+            SELECT name,source,datetime(endTime/1000000,'unixepoch') as end_time
+            FROM moz_downloads
+            WHERE endTime > $cutoff_unix_us
+            LIMIT 1000;")
           [ -n "$downloads" ] && out="$out\"downloads\":$downloads,"
         fi
 
@@ -219,8 +271,7 @@ install_sqlite3 || {
   errorMsg="sqlite3 missing and could not be installed."
   WriteLog "$errorMsg" ERROR
   final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"status\":\"error\",\"error\":\"$errorMsg\",\"copilot_action\":true}"
-  tmpfile=$(mktemp)
-  printf '%s\n' "$final_json" > "$tmpfile"
+  tmpfile=$(mktemp); printf '%s\n' "$final_json" > "$tmpfile"
   if ! mv -f "$tmpfile" "$ARLog" 2>/dev/null; then mv -f "$tmpfile" "$ARLog.new"; fi
   exit 1
 }
@@ -234,7 +285,7 @@ done
 payload="{${payload#,}}"
 
 ts=$(date --iso-8601=seconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
-final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"data\":$payload,\"copilot_action\":true}"
+final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"lookback_hours\":$LOOKBACK_HOURS,\"data\":$payload,\"copilot_action\":true}"
 
 # NDJSON overwrite: atomic move with .new fallback (no pre-clearing)
 tmpfile=$(mktemp)
