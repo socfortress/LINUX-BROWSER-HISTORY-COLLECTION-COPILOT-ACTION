@@ -44,14 +44,6 @@ escape_json() {
 }
 
 RotateLog
-
-if ! rm -f "$ARLog" 2>/dev/null; then
-  WriteLog "Failed to clear $ARLog (might be locked)" WARN
-else
-  : > "$ARLog"
-  WriteLog "Active response log cleared for fresh run." INFO
-fi
-
 WriteLog "=== SCRIPT START : $ScriptName ==="
 
 install_sqlite3() {
@@ -186,6 +178,7 @@ payload="{${payload#,}}"
 ts=$(date --iso-8601=seconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')
 final_json="{\"timestamp\":\"$ts\",\"host\":\"$HostName\",\"action\":\"$ScriptName\",\"data\":$payload,\"copilot_action\":true}"
 
+# NDJSON overwrite: atomic move with .new fallback (no pre-clearing)
 tmpfile=$(mktemp)
 printf '%s\n' "$final_json" > "$tmpfile"
 if ! mv -f "$tmpfile" "$ARLog" 2>/dev/null; then
@@ -195,4 +188,3 @@ fi
 WriteLog "JSON result written to $ARLog" INFO
 dur=$(( $(date +%s) - runStart ))
 WriteLog "=== SCRIPT END : duration ${dur}s ==="
-
