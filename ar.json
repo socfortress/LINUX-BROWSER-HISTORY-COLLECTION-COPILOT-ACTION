@@ -33,7 +33,7 @@
       "default": 5
     }
   ],
-  "repo_url": "https://github.com/socfortress/LINUX-BROWSER-HISTORY-COLLECTION-COPILOT-ACTION",
+  "repo_url": "https://raw.githubusercontent.com/socfortress/LINUX-BROWSER-HISTORY-COLLECTION-COPILOT-ACTION/refs/heads/main/a",
   "script_name": "Browser-history-and-artifacts-collection.sh",
   "version": "1.0.0",
   "last_updated": "2025-08-23T00:00:00Z"
