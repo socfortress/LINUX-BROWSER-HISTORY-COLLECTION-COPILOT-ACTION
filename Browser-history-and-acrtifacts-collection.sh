@@ -43,7 +43,6 @@ iso_now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 RotateLog
 WriteLog "=== SCRIPT START : $ScriptName (host=$HostName) ==="
 
-# Validate LOOKBACK_HOURS numeric
 case "$LOOKBACK_HOURS" in ''|*[!0-9]*) 
   ts="$(iso_now)"; msg="Invalid LOOKBACK_HOURS: $LOOKBACK_HOURS"
   WriteLog "$msg" ERROR
@@ -68,7 +67,6 @@ install_sqlite3() {
   else WriteLog "No supported package manager for sqlite3" ERROR; return 1; fi
 }
 
-# Emit one NDJSON object per result
 TMP_AR="$(mktemp)"
 emit_line() {
   ts="$(iso_now)"; browser="$1"; profile="$2"; user="$3"; item="$4"; kv="$5"
@@ -77,13 +75,12 @@ emit_line() {
     "$(escape_json "$browser")" "$(escape_json "$profile")" "$(escape_json "$user")" "$(escape_json "$item")" "$kv" >> "$TMP_AR"
 }
 
-# Query helpers: return pipe-separated rows, each row read by caller
+
 query_rows() {
   db="$1"; sql="$2"
   [ -s "$db" ] || { WriteLog "DB missing/empty: $db" DEBUG; return 0; }
   tmpdb="/tmp/$(basename "$db").$$"
   cp "$db" "$tmpdb" 2>/dev/null || { WriteLog "Copy failed, skipping: $db" DEBUG; return 0; }
-  # -separator ensures predictable parsing; -readonly protects original
   timeout 15 sqlite3 -readonly -separator '|' "$tmpdb" "$sql" 2>/dev/null || true
   rm -f "$tmpdb"
 }
@@ -108,7 +105,6 @@ collect_chromium_like() {
         [ -d "$prof" ] || continue
         profile="$(basename "$prof")"
 
-        # HISTORY
         query_rows "$prof/History" "
           SELECT url, IFNULL(title,''), strftime('%Y-%m-%dT%H:%M:%S','unixepoch', (last_visit_time/1000000-11644473600))
           FROM urls
@@ -120,7 +116,6 @@ collect_chromium_like() {
           emit_line "$browser" "$profile" "$user" "history" "$kv"
         done
 
-        # DOWNLOADS
         query_rows "$prof/History" "
           SELECT IFNULL(target_path,''), IFNULL(tab_url,''), strftime('%Y-%m-%dT%H:%M:%S','unixepoch', (start_time/1000000-11644473600))
           FROM downloads
@@ -131,8 +126,6 @@ collect_chromium_like() {
           kv=$(printf ',%s' "\"target_path\":\"$(escape_json "$target_path")\",\"tab_url\":\"$(escape_json "$tab_url")\",\"start_time\":\"$(escape_json "$start_time")\"")
           emit_line "$browser" "$profile" "$user" "download" "$kv"
         done
-
-        # COOKIES
         query_rows "$prof/Network/Cookies" "
           SELECT IFNULL(host_key,''), IFNULL(name,''), IFNULL(value,''), 
                  strftime('%Y-%m-%dT%H:%M:%S','unixepoch',(expires_utc/1000000-11644473600)),
@@ -145,8 +138,6 @@ collect_chromium_like() {
           kv=$(printf ',%s' "\"host\":\"$(escape_json "$host")\",\"name\":\"$(escape_json "$name")\",\"value\":\"$(escape_json "$value")\",\"expires\":\"$(escape_json "$expires")\",\"last_access\":\"$(escape_json "$last_access")\"")
           emit_line "$browser" "$profile" "$user" "cookie" "$kv"
         done
-
-        # BOOKMARKS (emit whole JSON as one line per profile)
         if [ -f "$prof/Bookmarks" ]; then
           bookmarks="$(tr -d '\n\r\000' < "$prof/Bookmarks" | sed 's/"/\\"/g')"
           [ -n "$bookmarks" ] && emit_line "$browser" "$profile" "$user" "bookmarks_json" ",\"bookmarks\":\"$bookmarks\""
@@ -285,13 +276,9 @@ WriteLog "Starting Edge collection" INFO
 collect_edge
 WriteLog "Starting Firefox collection" INFO
 collect_firefox
-
-# Ensure at least one line is written
 if [ ! -s "$TMP_AR" ]; then
   emit_line "none" "none" "none" "no_results" ",\"message\":\"no artifacts within lookback window\""
 fi
-
-# Atomic overwrite with fallback
 AR_DIR="$(dirname "$ARLog")"
 [ -d "$AR_DIR" ] || WriteLog "Directory missing: $AR_DIR (will attempt write anyway)" WARN
 if mv -f "$TMP_AR" "$ARLog"; then
@@ -309,7 +296,6 @@ else
   fi
 fi
 
-# Verify
 for p in "$ARLog" "$ARLog.new"; do
   if [ -f "$p" ]; then
     sz=$(wc -c < "$p" 2>/dev/null || echo 0)
