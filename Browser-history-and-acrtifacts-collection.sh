@@ -10,7 +10,7 @@ HostName="$(hostname)"
 runStart=$(date +%s)
 VERBOSE=1
 
-LOOKBACK_HOURS="${Arg1:-${1:-168}}"
+LOOKBACK_HOURS="${Arg1:-${ARG1:-${1:-168}}}"
 
 WriteLog() {
   Message="$1"; Level="${2:-INFO}"
@@ -38,7 +38,7 @@ RotateLog() {
 }
 
 escape_json() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-iso_now() { date --iso-8601=seconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z'; }
+iso_now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
 RotateLog
 WriteLog "=== SCRIPT START : $ScriptName (host=$HostName) ==="
