@@ -1,39 +1,19 @@
 {
   "copilot_action_name": "LINUX-BROWSER-HISTORY-COLLECTION-COPILOT-ACTION",
-  "description": "Collects browsing artifacts from Google Chrome, Chromium, Microsoft Edge, and Firefox (native, Flatpak, and Snap installations). Extracts history, bookmarks, downloads, and cookies by querying SQLite databases for each detected browser profile. Produces structured NDJSON output containing per-user and per-browser data for forensic and threat-hunting purposes. Writes results atomically to the Active Response log with .new fallback if locked.",
+  "description": "Collects browsing artifacts from Google Chrome, Chromium, Microsoft Edge, and Firefox (native, Flatpak, and Snap). Extracts history, bookmarks, downloads, and cookies from detected profiles within a specified lookback window (in hours). Outputs NDJSON structured per user, profile, and browser for forensic and threat-hunting purposes. Writes results atomically to the Active Response log with .new fallback.",
   "technology": "Linux",
   "icon": "linux",
   "script_parameters": [
     {
-      "name": "ARLog",
-      "type": "string",
-      "required": false,
-      "description": "Active Response NDJSON output path (atomic overwrite; falls back to .new if locked).",
-      "default": "/var/ossec/active-response/active-responses.log"
-    },
-    {
-      "name": "LogPath",
-      "type": "string",
-      "required": false,
-      "description": "Path to the rotating human-readable script log.",
-      "default": "/tmp/Collect-Browser-Artifacts-script.log"
-    },
-    {
-      "name": "LogMaxKB",
+      "name": "LOOKBACK_HOURS",
       "type": "integer",
       "required": false,
-      "description": "Maximum size of the log file (KB) before rotation.",
-      "default": 100
-    },
-    {
-      "name": "LogKeep",
-      "type": "integer",
-      "required": false,
-      "description": "Number of rotated log files to keep.",
-      "default": 5
+      "description": "Number of hours to look back when collecting browser artifacts. Default: 168 (7 days).",
+      "default": 168,
+      "arg_position": "1"
     }
   ],
-  "repo_url": "https://raw.githubusercontent.com/socfortress/LINUX-BROWSER-HISTORY-COLLECTION-COPILOT-ACTION/refs/heads/main/",
+  "repo_url": "https://raw.githubusercontent.com/socfortress/LINUX-BROWSER-HISTORY-COLLECTION-COPILOT-ACTION/refs/heads/main/Browser-history-and-artifacts-collection.sh",
   "script_name": "Browser-history-and-artifacts-collection.sh",
   "version": "1.0.0",
   "last_updated": "2025-08-23T00:00:00Z"
